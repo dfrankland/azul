@@ -202,7 +202,7 @@ impl Default for CrateInternalWindowState {
 }
 
 /// State, size, etc of the window, for comparing to the last frame
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct WindowState {
     /// Internal, read-only state (TODO: move this out of here!)
     pub(crate) internal: CrateInternalWindowState,

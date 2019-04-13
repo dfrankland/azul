@@ -308,8 +308,7 @@ impl<T> App<T> {
     #[cfg(debug_assertions)]
     #[cfg(not(test))]
     pub fn create_hot_reload_window(&mut self, options: WindowCreateOptions<T>, css_loader: Box<dyn HotReloadHandler>)
-    -> Result<Window<T>, WindowCreateError>
-    {
+    -> Result<Window<T>, WindowCreateError> {
         Window::new_hot_reload(
             &mut self.app_state.resources.fake_display.render_api,
             &mut self.app_state.resources.fake_display.hidden_display.gl_window().context(),
@@ -324,12 +323,10 @@ impl<T> App<T> {
     /// create extra windows, the default window will be the window submitted to
     /// the `.run` method.
     pub fn add_window(&mut self, window: Window<T>) {
-        use callbacks::DefaultCallbackSystem;
-
         let window_id = window.id;
         let fake_window = FakeWindow {
             state: window.state.clone(),
-            default_callbacks: DefaultCallbackSystem::new(),
+            default_callbacks: BTreeMap::new(),
             read_only_window: window.display.clone(),
         };
 
@@ -974,7 +971,7 @@ fn call_callbacks<T>(
                     tasks: Vec::new(),
                 };
 
-                if app_state.windows[window_id].default_callbacks.run_callback(
+                if app_state.windows[window_id].run_default_callback(
                     &mut *lock,
                     default_callback_id,
                     &mut app_state_no_data,
@@ -1284,15 +1281,14 @@ fn render_inner<T>(
         // Check that the framebuffer is complete
         debug_assert!(gl_context.check_frame_buffer_status(gl::FRAMEBUFFER) == gl::FRAMEBUFFER_COMPLETE);
 
-        // Invoke WebRender to render the frame - renders to the currently bound FB
-        gl_context.clear_color(background_color_f.r, background_color_f.g, background_color_f.b, background_color_f.a);
-        gl_context.clear_depth(0.0);
-
         // Disable SRGB and multisample, otherwise, WebRender will crash
         gl_context.disable(gl::FRAMEBUFFER_SRGB);
         gl_context.disable(gl::MULTISAMPLE);
         gl_context.disable(gl::POLYGON_SMOOTH);
 
+        // Invoke WebRender to render the frame - renders to the currently bound FB
+        gl_context.clear_color(background_color_f.r, background_color_f.g, background_color_f.b, background_color_f.a);
+        gl_context.clear_depth(0.0);
         app_resources.fake_display.renderer.as_mut().unwrap().render(framebuffer_size).unwrap();
 
         gl_context.delete_framebuffers(&framebuffers);
@@ -1350,79 +1346,13 @@ const DISPLAY_FRAGMENT_SHADER: &[u8] = b"
 \0";
 
 // NOTE: Compilation is thread-unsafe, should only be compiled on the main thread
-static mut DISPLAY_SHADER: Option<GLuint> = None;
+static mut DISPLAY_SHADER: Option<GlShader> = None;
 
 /// Compiles the display vertex / fragment shader, returns the compiled shaders.
-fn compile_screen_shader(context: &Gl) -> GLuint {
-
-    unsafe {
-        match DISPLAY_SHADER {
-            Some(s) => return s,
-            None => { },
-        }
-    }
-
-    let vertex_shader_object = context.create_shader(gl::VERTEX_SHADER);
-    context.shader_source(vertex_shader_object, &[DISPLAY_VERTEX_SHADER]);
-    context.compile_shader(vertex_shader_object);
-
-    #[cfg(debug_assertions)] {
-        if get_gl_shader_error(context, vertex_shader_object) {
-            let err = context.get_shader_info_log(vertex_shader_object);
-            context.delete_shader(vertex_shader_object);
-            panic!("VS compile error: {}", err);
-        }
-    }
-
-    let fragment_shader_object = context.create_shader(gl::FRAGMENT_SHADER);
-    context.shader_source(fragment_shader_object, &[DISPLAY_FRAGMENT_SHADER]);
-    context.compile_shader(fragment_shader_object);
-
-    #[cfg(debug_assertions)] {
-        if get_gl_shader_error(context, fragment_shader_object) {
-            let err = context.get_shader_info_log(fragment_shader_object);
-            context.delete_shader(vertex_shader_object);
-            context.delete_shader(fragment_shader_object);
-            panic!("FS compile error: {}", err);
-        }
-    }
-
-    let program = context.create_program();
-    context.attach_shader(program, vertex_shader_object);
-    context.attach_shader(program, fragment_shader_object);
-    context.link_program(program);
-
-    #[cfg(debug_assertions)] {
-        if get_gl_program_error(context, program) {
-            let err = context.get_program_info_log(program);
-            context.delete_shader(vertex_shader_object);
-            context.delete_shader(fragment_shader_object);
-            context.delete_program(program);
-            panic!("Program link error: {}", err);
-        }
-    }
-
-    context.delete_shader(vertex_shader_object);
-    context.delete_shader(fragment_shader_object);
-
-    unsafe { DISPLAY_SHADER = Some(program) };
-
-    program
-}
-
-// Returns true on error, false otherwise
-#[cfg(debug_assertions)]
-fn get_gl_shader_error(context: &Gl, shader_object: GLuint) -> bool {
-    let mut err = [0];
-    unsafe { context.get_shader_iv(shader_object, gl::COMPILE_STATUS, &mut err) };
-    err[0] == 0
-}
-
-#[cfg(debug_assertions)]
-fn get_gl_program_error(context: &Gl, shader_object: GLuint) -> bool {
-    let mut err = [0];
-    unsafe { context.get_program_iv(shader_object, gl::LINK_STATUS, &mut err) };
-    err[0] == 0
+fn compile_screen_shader(context: Rc<Gl>) -> GLuint {
+    DISPLAY_SHADER.get_or_insert_with(|| {
+        GlShader::new(context, DISPLAY_VERTEX_SHADER, DISPLAY_FRAGMENT_SHADER).unwrap()
+    }).shader_program
 }
 
 // Draws a texture to the currently bound framebuffer. Texture has to be cleaned up by the caller.
